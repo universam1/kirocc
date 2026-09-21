@@ -130,8 +130,14 @@ func TestE2E_WebSearch_NonStreaming(t *testing.T) {
 
 	// The second round has to carry the results, or the executor answers from
 	// nothing.
-	if got := historyText(client.payloads[1]); !strings.Contains(got, "https://example.com/w") {
-		t.Errorf("second payload history does not carry the result URL:\n%s", got)
+	// The second round must carry the snippet, not just the URL — feeding
+	// results back is pointless if the model only sees a list of links.
+	hist := historyText(client.payloads[1])
+	if !strings.Contains(hist, "https://example.com/w") {
+		t.Errorf("second payload history does not carry the result URL:\n%s", hist)
+	}
+	if !strings.Contains(hist, "12 °C") {
+		t.Errorf("second payload history does not carry the result snippet:\n%s", hist)
 	}
 }
 

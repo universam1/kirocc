@@ -640,31 +640,22 @@ func (o *serverToolOrchestrator) executeWebSearch(ctx context.Context, short str
 // history, so the executor sees identical text either way.
 func (o *serverToolOrchestrator) appendWebSearchMessages(msgs []anthropic.Message, srvToolUseID string, searchInput map[string]any, outcome webSearchOutcome, redacted []string) []anthropic.Message {
 	isError := outcome.errorCode != ""
-	var inner []anthropic.ContentBlock
+	// The text fed back to the executor for the next round. On success it
+	// carries each result's snippet (websearch.LiveResultText) — the excerpt is
+	// why results are looped back at all; a title-and-URL list would make the
+	// model answer blind. Errors reuse the shared renderer so live and replayed
+	// failures read identically.
+	var resultText string
 	if isError {
-		inner = []anthropic.ContentBlock{{
-			Type:      anthropic.BlockTypeWebSearchResultError,
-			ErrorCode: outcome.errorCode,
-		}}
+		resultText = reqconv.ServerToolResultText(anthropic.ContentBlock{
+			Type: anthropic.BlockTypeWebSearchToolResult,
+			Content: anthropic.MessageContent{Blocks: []anthropic.ContentBlock{{
+				Type:      anthropic.BlockTypeWebSearchResultError,
+				ErrorCode: outcome.errorCode,
+			}}},
+		})
 	} else {
-		inner = make([]anthropic.ContentBlock, 0, len(outcome.results))
-		for _, r := range outcome.results {
-			inner = append(inner, anthropic.ContentBlock{
-				Type:    anthropic.BlockTypeWebSearchResult,
-				Title:   r.Title,
-				URL:     r.URL,
-				PageAge: r.PageAge,
-			})
-		}
-	}
-	resultText := reqconv.ServerToolResultText(anthropic.ContentBlock{
-		Type:    anthropic.BlockTypeWebSearchToolResult,
-		Content: anthropic.MessageContent{Blocks: inner},
-	})
-	if resultText == "" {
-		// A search that matched nothing has to say so: an empty tool result
-		// reads as a failed call and the executor searches again.
-		resultText = "No web search results."
+		resultText = websearch.LiveResultText(outcome.results)
 	}
 	return appendServerToolRound(msgs, srvToolUseID, websearch.KiroToolName, searchInput, resultText, isError, redacted)
 }

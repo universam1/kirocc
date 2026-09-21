@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/d-kuro/kirocc/internal/anthropic"
 	"github.com/d-kuro/kirocc/internal/kiroproto"
@@ -35,8 +36,9 @@ const DefaultMaxUses = 5
 // the result block stays cheap to carry in history.
 const DefaultMaxResults = 5
 
-// maxQueryLen bounds the query the executor model may send. The real API
-// reports query_too_long rather than truncating, and so does this.
+// maxQueryLen bounds the query the executor model may send, in runes. The real
+// API reports query_too_long rather than truncating, and so does this. Counted
+// in runes, not bytes, so a CJK query is not rejected at a third of its length.
 const maxQueryLen = 400
 
 // Errors a provider may return. They map onto the error codes the Anthropic API
@@ -71,6 +73,42 @@ type Result struct {
 	URL     string
 	Snippet string
 	PageAge string
+}
+
+// LiveResultText renders results as the tool_result text fed back to the
+// executor model in the live search loop. Unlike the history-replay path
+// (reqconv.ServerToolResultText), it includes each result's snippet — the
+// excerpt is the point of feeding results back, so the model can answer from
+// them instead of only a list of links. Replays from client history stay
+// title/URL only, because clients do not carry snippets back, the same
+// asymmetry the real API has with encrypted_content.
+func LiveResultText(results []Result) string {
+	if len(results) == 0 {
+		// A search that matched nothing must say so; an empty tool result reads
+		// as a failed call and the executor just searches again.
+		return "No web search results."
+	}
+	var b strings.Builder
+	for i, r := range results {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		if r.Title != "" {
+			b.WriteString(r.Title)
+			b.WriteString("\n")
+		}
+		b.WriteString(r.URL)
+		if r.PageAge != "" {
+			b.WriteString(" (")
+			b.WriteString(r.PageAge)
+			b.WriteString(")")
+		}
+		if r.Snippet != "" {
+			b.WriteString("\n")
+			b.WriteString(r.Snippet)
+		}
+	}
+	return b.String()
 }
 
 // Query is one search request as it reaches a provider. The domain lists come
@@ -185,7 +223,7 @@ func (c *Context) Search(ctx context.Context, query string) ([]Result, error) {
 	if query == "" {
 		return nil, ErrInvalidInput
 	}
-	if len(query) > maxQueryLen {
+	if utf8.RuneCountInString(query) > maxQueryLen {
 		return nil, ErrQueryTooLong
 	}
 	results, err := c.provider.Search(ctx, Query{

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Provider identifiers accepted by Config.Provider.
@@ -345,15 +346,17 @@ func appendResult(out []Result, title, rawURL, snippet, age string) []Result {
 	})
 }
 
-// maxSnippetLen bounds what a provider's excerpt contributes to the result
-// block. Exa in particular returns page text, which would otherwise dominate
-// the conversation it is replayed into.
+// maxSnippetLen bounds what a provider's excerpt contributes to the result, in
+// runes. Exa in particular returns page text, which would otherwise dominate
+// the conversation it is fed into.
 const maxSnippetLen = 500
 
 func collapseSpace(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > maxSnippetLen {
-		s = strings.TrimSpace(s[:maxSnippetLen]) + "…"
+	if utf8.RuneCountInString(s) > maxSnippetLen {
+		// Truncate on a rune boundary: slicing raw bytes can split a multi-byte
+		// character and emit invalid UTF-8.
+		s = strings.TrimSpace(string([]rune(s)[:maxSnippetLen])) + "…"
 	}
 	return s
 }
